@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply antialiased;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-200 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-300;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Markdown Styles */
+.prose h1 { @apply text-2xl font-bold mb-4; }
+.prose h2 { @apply text-xl font-bold mt-8 mb-4 border-b border-slate-100 pb-2; }
+.prose h3 { @apply text-lg font-bold mt-6 mb-3; }
+.prose p { @apply leading-relaxed mb-4; }
+.prose ul { @apply list-disc pl-5 mb-4 space-y-2; }
+.prose ol { @apply list-decimal pl-5 mb-4 space-y-2; }
+.prose li { @apply pl-1; }
+.prose strong { @apply font-bold; }
+.prose blockquote { @apply border-l-4 border-indigo-500 pl-4 italic my-6 bg-indigo-50/30 py-2 rounded-r-lg; }
+.prose code { @apply bg-slate-100 text-indigo-600 px-1.5 py-0.5 rounded font-mono text-sm; }
+.prose pre { @apply bg-slate-900 text-slate-100 p-4 rounded-xl overflow-x-auto my-6 font-mono text-sm; }
+.prose hr { @apply my-8 border-slate-100; }
+.prose table { @apply w-full border-collapse mb-6; }
+.prose th { @apply bg-slate-50 border border-slate-200 p-2 text-left font-bold text-slate-700; }
+.prose td { @apply border border-slate-200 p-2; }
+
+/* Role specific adjustments */
+.prose-slate p { @apply text-slate-600; }
+.prose-invert p { @apply text-white; }
+.prose-invert strong { @apply text-white; }
+.prose-invert h1, .prose-invert h2, .prose-invert h3 { @apply text-white; }
+.prose-invert li { @apply text-white; }

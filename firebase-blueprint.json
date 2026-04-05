@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Información del perfil del usuario",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "ID único del usuario" },
+        "email": { "type": "string", "description": "Correo electrónico del usuario" },
+        "displayName": { "type": "string", "description": "Nombre visible" },
+        "photoURL": { "type": "string", "description": "URL de la foto de perfil" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Fecha de creación" }
+      },
+      "required": ["uid", "email"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Un mensaje individual en una conversación",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["user", "assistant"], "description": "Quién envió el mensaje" },
+        "content": { "type": "string", "description": "Contenido del mensaje" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Cuándo se envió" },
+        "hasFile": { "type": "boolean", "description": "Si el mensaje incluye un archivo" }
+      },
+      "required": ["role", "content", "timestamp"]
+    },
+    "ChatSession": {
+      "title": "ChatSession",
+      "description": "Una sesión de chat completa",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "ID del dueño de la sesión" },
+        "title": { "type": "string", "description": "Título de la sesión" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Última actualización" }
+      },
+      "required": ["userId", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Datos privados del usuario"
+    },
+    "/users/{userId}/sessions/{sessionId}": {
+      "schema": "ChatSession",
+      "description": "Sesiones de chat del usuario"
+    },
+    "/users/{userId}/sessions/{sessionId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Mensajes dentro de una sesión"
+    }
+  }
+}
