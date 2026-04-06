@@ -169,6 +169,8 @@ export default function App() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [isLoginLoading, setIsLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -244,10 +246,21 @@ export default function App() {
   }, [messages]);
 
   const handleLogin = async () => {
+    setIsLoginLoading(true);
+    setLoginError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login Error:", error);
+      if (error.code === 'auth/popup-blocked') {
+        setLoginError('El navegador bloqueó la ventana emergente. Por favor, permite las ventanas emergentes para este sitio.');
+      } else if (error.code === 'auth/unauthorized-domain') {
+        setLoginError('Este dominio no está autorizado en la consola de Firebase. Por favor, añade tu dominio de Vercel a la lista de dominios autorizados.');
+      } else {
+        setLoginError('Hubo un error al iniciar sesión. Por favor, intenta de nuevo.');
+      }
+    } finally {
+      setIsLoginLoading(false);
     }
   };
 
@@ -498,11 +511,23 @@ export default function App() {
                   <p className="text-xs text-indigo-700 font-medium mb-3">Guarda tu historial y accede a funciones premium.</p>
                   <button 
                     onClick={handleLogin}
-                    className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
+                    disabled={isLoginLoading}
+                    className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 disabled:opacity-50"
                   >
-                    <LogIn className="w-4 h-4" />
-                    Iniciar Sesión
+                    {isLoginLoading ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <LogIn className="w-4 h-4" />
+                        Iniciar Sesión
+                      </>
+                    )}
                   </button>
+                  {loginError && (
+                    <div className="mt-3 p-2 bg-rose-50 border border-rose-100 rounded-lg">
+                      <p className="text-[10px] text-rose-600 leading-tight font-medium">{loginError}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
