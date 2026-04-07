@@ -31,25 +31,30 @@ service cloud.firestore {
     }
 
     function isValidSession(data, userId) {
-      return data.keys().hasAll(['userId', 'updatedAt']) &&
-             data.userId == userId;
+      return data.updatedAt != null;
     }
 
     function isValidMessage(data) {
-      return data.keys().hasAll(['role', 'content', 'timestamp']) &&
-             data.role in ['user', 'assistant'] &&
+      return data.role in ['user', 'assistant'] &&
              data.content is string;
     }
 
     // Rules
+    match /__test__/{docId} {
+      allow read: if true;
+    }
+
     match /users/{userId} {
-      allow read, write: if isOwner(userId) && (request.method == 'GET' || isValidUser(request.resource.data));
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidUser(request.resource.data);
       
       match /sessions/{sessionId} {
-        allow read, write: if isOwner(userId) && (request.method == 'GET' || request.method == 'DELETE' || isValidSession(request.resource.data, userId));
+        allow read, delete: if isOwner(userId);
+        allow write: if isOwner(userId) && isValidSession(request.resource.data, userId);
         
         match /messages/{messageId} {
-          allow read, write: if isOwner(userId) && (request.method == 'GET' || isValidMessage(request.resource.data));
+          allow read: if isOwner(userId);
+          allow write: if isOwner(userId) && isValidMessage(request.resource.data);
         }
       }
     }

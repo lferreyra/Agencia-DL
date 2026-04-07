@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Version: 1.0.2 - Improved Error Diagnostics
 import { useState, useRef, useEffect } from 'react';
 import { 
   Send, 
@@ -178,43 +179,70 @@ export default function App() {
   // Auth Listener
   useEffect(() => {
     testFirestoreConnection();
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        // Create or update user profile
-        await setDoc(doc(db, 'users', currentUser.uid), {
-          uid: currentUser.uid,
-          email: currentUser.email,
-          displayName: currentUser.displayName,
-          photoURL: currentUser.photoURL,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-
-        // Load or create a default session
-        const sessionsRef = collection(db, 'users', currentUser.uid, 'sessions');
-        const q = query(sessionsRef, orderBy('updatedAt', 'desc'));
-        const querySnapshot = await getDocs(q);
-        
-        if (!querySnapshot.empty) {
-          setCurrentSessionId(querySnapshot.docs[0].id);
-        } else {
-          const newSession = await addDoc(sessionsRef, {
-            userId: currentUser.uid,
-            title: 'Nueva Sesión',
+        try {
+          // Create or update user profile
+          await setDoc(doc(db, 'users', currentUser.uid), {
+            uid: currentUser.uid,
+            email: currentUser.email,
+            displayName: currentUser.displayName,
+            photoURL: currentUser.photoURL,
             updatedAt: serverTimestamp()
-          });
-          setCurrentSessionId(newSession.id);
+          }, { merge: true });
+
+          // Load or create a default session
+          const sessionsRef = collection(db, 'users', currentUser.uid, 'sessions');
+          const q = query(sessionsRef, orderBy('updatedAt', 'desc'));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            if (!currentSessionId) {
+              setCurrentSessionId(querySnapshot.docs[0].id);
+            }
+          } else {
+            const newSession = await addDoc(sessionsRef, {
+              userId: currentUser.uid,
+              title: 'Nueva Sesión',
+              updatedAt: serverTimestamp()
+            });
+            setCurrentSessionId(newSession.id);
+          }
+        } catch (error) {
+          console.error("Error initializing user data:", error);
         }
       } else {
         setCurrentSessionId(null);
+        setSessions([]);
         setMessages([{ 
           role: 'assistant', 
           content: 'Hola, soy tu equipo de especialistas en Marketing Digital. ¿Qué proyecto vamos a monetizar hoy? \n\nPuedes usar comandos como `[EBOOK]`, `[ACTIVOS]` o `[PAQUETE COMPLETO]` para empezar. \n\n**¡Inicia sesión para guardar tu historial!**' 
         }]);
       }
     });
-    return () => unsubscribe();
+
+    return () => unsubscribeAuth();
   }, []);
+
+  // Sessions Listener
+  useEffect(() => {
+    if (user) {
+      const sessionsRef = collection(db, 'users', user.uid, 'sessions');
+      const q = query(sessionsRef, orderBy('updatedAt', 'desc'));
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const loadedSessions = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setSessions(loadedSessions);
+      }, (error) => {
+        console.error("Snapshot error for sessions:", error);
+      });
+      return () => unsubscribe();
+    }
+  }, [user]);
 
   // Messages Listener
   useEffect(() => {
@@ -225,6 +253,8 @@ export default function App() {
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const loadedMessages = snapshot.docs.map(doc => doc.data() as Message);
         setMessages(loadedMessages);
+      }, (error) => {
+        console.error("Snapshot error for messages:", error);
       });
       return () => unsubscribe();
     } else if (!user) {
@@ -287,6 +317,11 @@ export default function App() {
       return;
     }
 
+    if (file.size > 5 * 1024 * 1024) {
+      alert('El archivo es demasiado grande. El límite es de 5MB para asegurar un procesamiento rápido.');
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const base64 = event.target?.result as string;
@@ -313,39 +348,44 @@ export default function App() {
     setSelectedFile(null);
     setIsLoading(true);
 
-    // If user is logged in, save the message to Firestore
-    if (user && currentSessionId) {
-      const messagesRef = collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages');
-      await addDoc(messagesRef, {
-        role: 'user',
-        content: userContent,
-        hasFile: hasFile,
-        timestamp: serverTimestamp()
-      });
-      
-      // Update session title if it's the default one
-      const sessionDoc = sessions.find(s => s.id === currentSessionId);
-      if (!sessionDoc || sessionDoc.title === 'Nueva Conversación') {
-        await setDoc(doc(db, 'users', user.uid, 'sessions', currentSessionId), {
-          title: userContent.slice(0, 30) + (userContent.length > 30 ? '...' : ''),
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      } else {
-        // Update session timestamp
-        await setDoc(doc(db, 'users', user.uid, 'sessions', currentSessionId), {
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      }
-    } else {
-      // Local state update for non-logged in users
-      setMessages(prev => [...prev, { role: 'user', content: userContent, hasFile: hasFile }]);
-    }
-
     try {
-      // Prepare multimodal parts
+      // 1. Save user message to Firestore
+      if (user && currentSessionId) {
+        try {
+          // Add a timeout to Firestore operation
+          const savePromise = addDoc(collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages'), {
+            role: 'user',
+            content: userContent,
+            hasFile: hasFile,
+            timestamp: serverTimestamp()
+          });
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Tiempo de espera agotado al guardar en la base de datos.")), 8000)
+          );
+
+          await Promise.race([savePromise, timeoutPromise]);
+          
+          // Update session title/timestamp
+          const sessionDoc = sessions.find(s => s.id === currentSessionId);
+          const updateData: any = { updatedAt: serverTimestamp() };
+          if (!sessionDoc || sessionDoc.title === 'Nueva Conversación') {
+            updateData.title = userContent.slice(0, 30) + (userContent.length > 30 ? '...' : '');
+          }
+          await setDoc(doc(db, 'users', user.uid, 'sessions', currentSessionId), updateData, { merge: true });
+        } catch (dbError: any) {
+          console.error("Database Error (User Message):", dbError);
+          // Don't block the AI call if saving user message fails, just log it
+        }
+      } else {
+        setMessages(prev => [...prev, { role: 'user', content: userContent, hasFile: hasFile }]);
+      }
+
+      // 2. Prepare multimodal parts for AI
       const parts: any[] = [];
       if (currentInput) parts.push({ text: currentInput });
       if (currentFile) {
+        if (!currentFile.data) throw new Error("Lectura de archivo fallida.");
         parts.push({
           inlineData: {
             data: currentFile.data,
@@ -357,49 +397,99 @@ export default function App() {
         }
       }
 
-      const response = await genAI.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          ...messages.map(m => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: m.content }]
-          })),
-          {
-            role: 'user',
-            parts: parts
+      // Filter and map history to ensure valid roles and non-empty content
+      const history = messages
+        .filter(m => m.content && !m.content.startsWith('⚠️')) // Exclude error messages from history
+        .slice(-6) // Reduced history size for faster response
+        .map(m => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: m.content || "" }]
+        }));
+
+      // 3. Call Gemini API with timeout
+      let response;
+      try {
+        const aiPromise = genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [
+            ...history,
+            {
+              role: 'user',
+              parts: parts
+            }
+          ],
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTIONS + `\n\nTU ROL ACTUAL ES: [${ROLES[activeRole].label}] - ${ROLES[activeRole].desc}. \nResponde como este especialista de forma exclusiva.`
           }
-        ],
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTIONS + `\n\nTU ROL ACTUAL ES: [${ROLES[activeRole].label}] - ${ROLES[activeRole].desc}. \nResponde como este especialista de forma exclusiva.`
-        }
-      });
+        });
+
+        const aiTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("La IA está tardando demasiado en responder. Por favor, intenta con un mensaje más corto.")), 25000)
+        );
+
+        response = await Promise.race([aiPromise, aiTimeout]) as any;
+      } catch (aiError: any) {
+        console.error("AI API Error:", aiError);
+        throw new Error(aiError.message || "Error de conexión con el motor de IA.");
+      }
 
       const text = response.text;
-      if (!text) throw new Error("No response text");
+      if (!text) throw new Error("La IA devolvió una respuesta vacía.");
 
+      // 4. Save AI response
       if (user && currentSessionId) {
-        const messagesRef = collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages');
-        await addDoc(messagesRef, {
-          role: 'assistant',
-          content: text,
-          roleLabel: ROLES[activeRole].label,
-          timestamp: serverTimestamp()
-        });
+        try {
+          const messagesRef = collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages');
+          await addDoc(messagesRef, {
+            role: 'assistant',
+            content: text,
+            roleLabel: ROLES[activeRole].label,
+            timestamp: serverTimestamp()
+          });
+        } catch (dbError: any) {
+          console.error("Database Error (AI Response):", dbError);
+          setMessages(prev => [...prev, { role: 'assistant', content: text, roleLabel: ROLES[activeRole].label }]);
+        }
       } else {
         setMessages(prev => [...prev, { role: 'assistant', content: text, roleLabel: ROLES[activeRole].label }]);
       }
-    } catch (error) {
-      console.error("Error calling Gemini:", error);
-      const errorMsg = 'Lo siento, hubo un error al procesar tu solicitud. Por favor, intenta de nuevo.';
-      if (user && currentSessionId) {
-        const messagesRef = collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages');
-        await addDoc(messagesRef, {
-          role: 'assistant',
-          content: errorMsg,
-          timestamp: serverTimestamp()
-        });
+    } catch (error: any) {
+      console.error("Detailed Catch-All Error:", error);
+      let errorMsg = 'Error inesperado. Por favor, intenta de nuevo.';
+      
+      if (error?.message) {
+        errorMsg = error.message;
+      } else if (typeof error === 'string') {
+        errorMsg = error;
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+        try {
+          errorMsg = `Error técnico: ${JSON.stringify(error).slice(0, 150)}`;
+        } catch (e) {
+          errorMsg = 'Error crítico en el motor de procesamiento.';
+        }
+      }
+
+      if (errorMsg.includes('insufficient permissions')) {
+        errorMsg = "Error de permisos en la base de datos. Por favor, verifica que tu sesión sea válida.";
+      }
+
+      const finalErrorMsg = `⚠️ ERROR CRÍTICO: ${errorMsg}\n\n**Sugerencia:** Si este error persiste, por favor haz clic en "Nuevo Chat" o usa el botón "Borrar Mensajes" en la barra lateral para reiniciar esta sesión.`;
+      console.log("Setting error message:", finalErrorMsg);
+
+      if (user && currentSessionId) {
+        try {
+          const messagesRef = collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages');
+          await addDoc(messagesRef, {
+            role: 'assistant',
+            content: finalErrorMsg,
+            timestamp: serverTimestamp()
+          });
+        } catch (e) {
+          console.error("Failed to save error message to DB:", e);
+          setMessages(prev => [...prev, { role: 'assistant', content: finalErrorMsg }]);
+        }
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: finalErrorMsg }]);
       }
     } finally {
       setIsLoading(false);
@@ -430,24 +520,33 @@ export default function App() {
   }, [user]);
 
   const handleNewChat = async () => {
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+    
     if (!user) {
       setMessages([]);
       setCurrentSessionId(null);
       return;
     }
 
-    const newSessionRef = await addDoc(collection(db, `users/${user.uid}/sessions`), {
-      title: 'Nueva Conversación',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      activeRole: 'DIRECTOR'
-    });
-    
-    setCurrentSessionId(newSessionRef.id);
-    setMessages([]); // Will be populated by messages listener
+    try {
+      const newSessionRef = await addDoc(collection(db, `users/${user.uid}/sessions`), {
+        userId: user.uid,
+        title: 'Nueva Conversación',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        activeRole: 'DIRECTOR'
+      });
+      
+      setCurrentSessionId(newSessionRef.id);
+      setMessages([]); // Will be populated by messages listener
+    } catch (error: any) {
+      console.error("Error creating new session:", error);
+      alert(`Error al crear sesión: ${error.message || 'Sin permisos'}`);
+    }
   };
 
   const loadSession = (sessionId: string) => {
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
     setCurrentSessionId(sessionId);
   };
 
@@ -495,7 +594,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-4">
+            <div className="p-4 space-y-2">
               <button 
                 onClick={handleNewChat}
                 className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 hover:scale-[1.02] active:scale-[0.98]"
@@ -503,6 +602,54 @@ export default function App() {
                 <Plus className="w-4 h-4" />
                 Nuevo Chat
               </button>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <button 
+                  onClick={async () => {
+                    if (confirm('¿Borrar todos los mensajes de este chat permanentemente?')) {
+                      if (user && currentSessionId) {
+                        try {
+                          const messagesRef = collection(db, 'users', user.uid, 'sessions', currentSessionId, 'messages');
+                          const snapshot = await getDocs(messagesRef);
+                          const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
+                          await Promise.all(deletePromises);
+                        } catch (e) {
+                          console.error("Error clearing messages from DB:", e);
+                        }
+                      }
+                      setMessages([]);
+                    }
+                  }}
+                  className="flex items-center justify-center gap-1 bg-rose-50 text-rose-600 py-2 rounded-xl text-[10px] font-bold hover:bg-rose-100 transition-all border border-rose-100"
+                  title="Borrar historial de este chat"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Borrar Chat
+                </button>
+                
+                <button 
+                  onClick={async () => {
+                    try {
+                      setIsLoading(true);
+                      await testFirestoreConnection();
+                      await genAI.models.generateContent({
+                        model: "gemini-3-flash-preview",
+                        contents: "hola",
+                        config: { maxOutputTokens: 5 }
+                      });
+                      alert("✅ Conexión con Base de Datos e IA: OK");
+                    } catch (e: any) {
+                      alert(`❌ Error de sistema: ${e.message}`);
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="flex items-center justify-center gap-1 bg-emerald-50 text-emerald-600 py-2 rounded-xl text-[10px] font-bold hover:bg-emerald-100 transition-all border border-emerald-100"
+                >
+                  <Check className="w-3 h-3" />
+                  Test Sistema
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-6">
@@ -641,6 +788,12 @@ export default function App() {
                 </button>
               </div>
             )}
+            <div className="p-4 border-t border-slate-100">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium uppercase tracking-widest">
+                <span>v1.0.3-stable</span>
+                <span>© 2026 Agencia Pro</span>
+              </div>
+            </div>
           </motion.aside>
         )}
       </AnimatePresence>
@@ -659,7 +812,7 @@ export default function App() {
               </button>
             )}
             <div className="flex flex-col">
-              <h2 className="font-bold text-sm text-slate-800 truncate max-w-[150px] sm:max-w-[300px]">
+              <h2 className="font-bold text-sm text-slate-800 truncate max-w-[100px] sm:max-w-[300px]">
                 {user && currentSessionId 
                   ? sessions.find(s => s.id === currentSessionId)?.title || 'Conversación'
                   : 'Nueva Conversación'}
@@ -671,7 +824,14 @@ export default function App() {
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button 
+              onClick={handleNewChat}
+              className="md:hidden flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold hover:bg-indigo-700 transition-all shadow-sm"
+            >
+              <Plus className="w-3 h-3" />
+              Nuevo
+            </button>
             <div className="hidden sm:flex flex-col items-end mr-2">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Especialista</span>
               <span className="text-xs font-bold text-indigo-600 leading-none">{ROLES[activeRole].label}</span>
@@ -716,6 +876,13 @@ export default function App() {
                   <p className="text-[10px] text-slate-500">Genera contenido visual para tus redes.</p>
                 </div>
               </div>
+              <button 
+                onClick={handleNewChat}
+                className="flex items-center gap-2 text-indigo-600 font-bold text-xs hover:underline"
+              >
+                <Plus className="w-3 h-3" />
+                Empezar un chat limpio
+              </button>
             </div>
           )}
           {messages.map((msg, idx) => (
